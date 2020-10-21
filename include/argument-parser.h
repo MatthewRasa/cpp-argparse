@@ -93,7 +93,7 @@ namespace argparse {
 		private:
 			friend class Argument_Parser;
 
-			Optional_Info(Optional_Type type, std::string &&name) noexcept
+			Optional_Info(Optional_Type type, std::string name) noexcept
 					: flag{' '},
 					  type{type},
 					  name{std::move(name)} { }
@@ -163,7 +163,7 @@ namespace argparse {
 			if (m_positional_args.find(formatted_name) != m_positional_args.end())
 				throw std::logic_error{lerrstr("optional argument reference name conflicts with positional argument name '", formatted_name, "'")};
 			auto it = m_optional_args.emplace(formatted_name,
-					std::unique_ptr<Optional_Info>{new Optional_Info{type, std::move(formatted_name)}}).first;
+					std::unique_ptr<Optional_Info>{new Optional_Info{type, formatted_name}}).first;
 			m_optional_order.push_back(it->second->name);
 			return *it->second;
 		}
@@ -221,24 +221,25 @@ namespace argparse {
 		void parse_args(int &argc, char const **&argv) {
 			m_scriptname = argv[0];
 
-			auto optional_args = m_optional_args;
 			std::vector<const char *> positional_args;
 			positional_args.reserve(argc - 1);
+			std::unordered_map<std::string, std::vector<std::string>> optional_values;
 
 			for (int argi = 1; argi < argc; ++argi) {
 				std::string string_arg{argv[argi]};
 				if (valid_option_name(string_arg))
-					argi = parse_optional_arg(optional_args, string_arg, argi, argc, argv);
+					argi = parse_optional_arg(optional_values, string_arg, argi, argc, argv);
 				else
 					positional_args.push_back(argv[argi]);
 			}
 			if (positional_args.size() < m_positional_order.size())
 				throw std::runtime_error{errstr("requires positional argument '", m_positional_order[positional_args.size()], "'")};
 
-			m_optional_args = optional_args;
 			std::size_t pos_idx;
 			for (pos_idx = 0; pos_idx < m_positional_order.size(); ++pos_idx)
 				m_positional_args[m_positional_order[pos_idx]]->value = positional_args[pos_idx];
+			for (const auto &pair : optional_values)
+				m_optional_args[pair.first]->values = std::move(pair.second);
 
 			argc = positional_args.size() - pos_idx + 1;
 			for ( ; pos_idx < positional_args.size(); ++pos_idx)
@@ -512,7 +513,7 @@ namespace argparse {
 		/**
 		 * Parse optional argument from the list of user-provided arguments.
 		 */
-		std::size_t parse_optional_arg(decltype(m_optional_args) &optional_args,
+		std::size_t parse_optional_arg(std::unordered_map<std::string, std::vector<std::string>> &optional_values,
 				const std::string &option_name, int argi, int argc, char const **argv) {
 			const auto formatted_option_name = lookup_formatted_option_name(option_name);
 			if (formatted_option_name == "help") {
@@ -520,22 +521,23 @@ namespace argparse {
 				std::exit(0);
 			}
 
-			auto it = optional_args.find(formatted_option_name);
-			if (it == optional_args.end())
+			auto it = m_optional_args.find(formatted_option_name);
+			if (it == m_optional_args.end())
 				throw std::runtime_error{errstr("invalid option '", option_name, "', pass --help to display possible options")};
+			auto &values = optional_values[formatted_option_name];
 			if (it->second->type == Optional_Type::FLAG) {
-				if (!it->second->values.empty())
+				if (!values.empty())
 					throw std::runtime_error{errstr("'", option_name, "' should only be specified once")};
-				it->second->values.push_back("true");
+				values.push_back("true");
 			} else {
 				if (++argi == argc)
 					throw std::runtime_error{errstr("'", option_name, "' requires a value")};
 				std::string string_val{argv[argi]};
 				if (valid_option_name(string_val))
 					throw std::runtime_error{errstr("'", option_name, "' requires a value")};
-				if (it->second->type != Optional_Type::APPEND && !it->second->values.empty())
+				if (it->second->type != Optional_Type::APPEND && !values.empty())
 					throw std::runtime_error{errstr("'", option_name, "' should only be specified once")};
-				it->second->values.push_back(std::move(string_val));
+				values.push_back(std::move(string_val));
 			}
 			return argi;
 		}
